@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+
+# Copyright (c) 2017-present, Facebook, Inc.
+# All rights reserved.
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree. An additional grant
+# of patent rights can be found in the PATENTS file in the same directory.
+
+from parlai.zoo.model_list import model_list
+
+fout = open('zoo_list.inc', 'w')
+
+for model in model_list:
+    name = model['id'].replace('_', ' ').title()
+    fout.write(name)
+    fout.write('\n')
+    fout.write('-' * len(name))
+    fout.write('\n\n')
+
+    fout.write(model['description'])
+    fout.write('\n\n')
+
+    fout.write('Example invocation:\n\n')
+    if 'example' in model:
+        example = model['example']
+    else:
+        example = (
+            "python -m parlai.scripts.eval_model --model {} --task {} -mf {}"
+            .format(model['agent'], model['task'], model['path'])
+        )
+    result = model['result'].strip().split("\n")
+    # strip leading whitespace from results
+    result = [r.strip() for r in result]
+    # make sure we indent for markdown though
+    result = ["   " + r for r in result]
+    result = "\n".join(result)
+    fout.write(
+        '.. code-block:: shell\n\n   {}\n   ...\n{}\n\n'
+        .format(example, result)
+    )
+    fout.write('\n')
+
+fout.close()
