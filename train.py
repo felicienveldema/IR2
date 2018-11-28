@@ -18,6 +18,8 @@ TRG_PATH = "Data/target_data.txt"
 SRC_WORD2ID_PATH = "Data/input_word2id.json"
 TRG_WORD2ID_PATH = "Data/target_word2id.json"
 DEVICE = "cuda:0"
+SOS_ID = 1
+EOS_ID = 2
 
 def retrieve_data():
     if not os.path.isfile(SRC_WORD2ID_PATH):
@@ -41,19 +43,18 @@ def retrieve_data():
 
 def main():
     dataloader, vocab_size_src, vocab_size_trg = retrieve_data()
-    topic_seq2seq = TopicSeq2Seq(vocab_size_src, FLAGS.dnn_hidden_units, vocab_size_trg).to(FLAGS.device)
+    topic_seq2seq = TopicSeq2Seq(FLAGS.device, vocab_size_src, FLAGS.dnn_hidden_units, vocab_size_trg, SOS_ID, EOS_ID).to(FLAGS.device)
     encoder_optimizer = optim.Adam(topic_seq2seq.encoder.parameters(), lr=FLAGS.learning_rate)
     decoder_optimizer = optim.Adam(topic_seq2seq.decoder.parameters(), lr=FLAGS.learning_rate)
     for step, (batch_input, input_length, batch_target, target_length) in enumerate(dataloader):
-        print(batch_input)
-        print(batch_target)
-        print(input_length)
-        print(target_length)
+        print(batch_target.shape)
+        print(batch_input.shape)
 
         encoder_optimizer.zero_grad()
         decoder_optimizer.zero_grad()
         out = topic_seq2seq.forward(batch_input.to(FLAGS.device), input_length)
         print(out)
+        break
 
 if __name__ == '__main__':
     # Command line arguments
