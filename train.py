@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 import os
 import json
+import numpy as np
 
 DNN_HIDDEN_UNITS_DEFAULT = 128
 LEARNING_RATE_DEFAULT = 2e-3
@@ -20,7 +21,7 @@ TRG_WORD2ID_PATH = "Data/target_word2id.json"
 DEVICE = "cuda:0"
 SOS_ID = 1
 EOS_ID = 2
-
+MAX_LENGTH = 5
 def retrieve_data():
     if not os.path.isfile(SRC_WORD2ID_PATH):
         build_vocab.main(SRC_PATH, TRG_PATH, SRC_WORD2ID_PATH, TRG_WORD2ID_PATH)
@@ -40,21 +41,32 @@ def retrieve_data():
 
     return dataloader, vocab_size_src, vocab_size_trg
 
+def one_hot(input_data, target_length, vocab_size):
+    one_hot = np.zeros((target_length, vocab_size))
+    one_hot[np.arange(target_length), input_data] = 1
+    return torch.LongTensor(one_hot).view(1,target_length,-1).to(DEVICE)
 
 def main():
     dataloader, vocab_size_src, vocab_size_trg = retrieve_data()
-    topic_seq2seq = TopicSeq2Seq(FLAGS.device, vocab_size_src, FLAGS.dnn_hidden_units, vocab_size_trg, SOS_ID, EOS_ID).to(FLAGS.device)
+    topic_seq2seq = TopicSeq2Seq(FLAGS.device, vocab_size_src, FLAGS.dnn_hidden_units, vocab_size_trg, SOS_ID, EOS_ID, FLAGS.max_length).to(FLAGS.device)
     encoder_optimizer = optim.Adam(topic_seq2seq.encoder.parameters(), lr=FLAGS.learning_rate)
     decoder_optimizer = optim.Adam(topic_seq2seq.decoder.parameters(), lr=FLAGS.learning_rate)
     for step, (batch_input, input_length, batch_target, target_length) in enumerate(dataloader):
-        print(batch_target.shape)
-        print(batch_input.shape)
 
         encoder_optimizer.zero_grad()
         decoder_optimizer.zero_grad()
+
         out = topic_seq2seq.forward(batch_input.to(FLAGS.device), input_length)
-        print(out)
+        print(out[2])
+        one_hot_targets = one_hot(batch_target, target_length[0], vocab_size_trg)
+        one_hot_out = one_hot(out[0], len(out[0]), vocab_size_trg)
+
+        loss = nn.NLLLoss()(out[0], one_hot_targets)
+        loss.backward()
+        encoder_optimizer.step()
+        decoder_optimizer.step()
         break
+
 
 if __name__ == '__main__':
     # Command line arguments
@@ -70,6 +82,8 @@ if __name__ == '__main__':
     # parser.add_argument('--data_dir', type = str, default = DATA_DIR_DEFAULT,
     #                     help='Directory for storing input data')
     parser.add_argument('--device', type=str, default=DEVICE, help="Training device 'cpu' or 'cuda:0'")
+    parser.add_argument('--max_length', type = int, default = MAX_LENGTH,
+                      help='Max length of generated sentence')
     FLAGS, unparsed = parser.parse_known_args()
 
     main()
