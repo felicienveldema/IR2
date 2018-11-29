@@ -13,7 +13,13 @@ try:
 except ImportError:
     raise ImportError('Please `pip install emoji unidecode` for the twitter task.')
 
+from collections import Counter, defaultdict
+
 import parlai.core.build_data as build_data
+import numpy as np
+import pickle
+import nltk
+import math
 import os
 
 
@@ -44,6 +50,11 @@ def create_fb_format(data, dpath):
     fw1 = open(os.path.join(dpath, 'train.txt'), 'w')
     fw2 = open(os.path.join(dpath, 'valid.txt'), 'w')
     fw3 = open(os.path.join(dpath, 'test.txt'), 'w')
+    fw4 = open(os.path.join(dpath, 'pmi.pkl'), 'wb')
+
+    bigrams = []
+    unigrams = []
+
     for i in range(0, len(data) - 1, 2):
         fout = fw1
         if (i % 500) == 0:
@@ -59,17 +70,49 @@ def create_fb_format(data, dpath):
         y = ''.join(list(map(replace_emoji, y)))
         x = split_punctuation(unidecode.unidecode(x))
         y = split_punctuation(unidecode.unidecode(y))
-        x = ' '.join(x.split())
-        y = ' '.join(y.split())
+
+        x = x.split()
+        y = y.split()
+
+        x_bigram = list(nltk.bigrams(x))
+        y_bigram = list(nltk.bigrams(y))
+
+        bigrams.append(x_bigram)
+        bigrams.append(y_bigram)
+
+        unigrams.append(x)
+        unigrams.append(y)
+
+        x = ' '.join(x)
+        y = ' '.join(y)
 
         if len(x) < 1 or len(y) < 1:
             use = False
         if use:
             s = 'text:' + x + '\tlabels:' + y + '\tepisode_done:True'
             fout.write('{} \n'.format(s))
+
+    bigram_counter = Counter([tuple(sorted(bigram)) for bigram_sublist in bigrams for bigram in bigram_sublist])
+    unigram_counter = Counter([unigram for unigram_sublist in unigrams for unigram in unigram_sublist])
+
+    total_bi = sum(bigram_counter.values(), 0.0)
+    for key in bigram_counter:
+        bigram_counter[key] /= total_bi
+
+    total_uni = sum(unigram_counter.values(), 0.0)
+    for key in unigram_counter:
+        unigram_counter[key] /= total_uni
+
+    pmi = defaultdict(float)
+    for bigram, bigram_prob in bigram_counter.items():
+        pmi[bigram] = math.log(bigram_prob / (unigram_counter[bigram[0]]*unigram_counter[bigram[1]]))
+
+    pickle.dump(pmi, fw4)
+
     fw1.close()
     fw2.close()
     fw3.close()
+    fw4.close()
 
 
 def build(opt):
