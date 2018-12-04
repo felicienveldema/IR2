@@ -159,7 +159,14 @@ class TorchAgent(Agent):
             help='Choose between pytorch optimizers. Any member of torch.optim'
                  ' should be valid.')
         agent.add_argument(
+            '-opt2', '--optimizer2', default='sgd', choices=cls.OPTIM_OPTS,
+            help='Choose between pytorch optimizers. Any member of torch.optim'
+                 ' should be valid.')
+        agent.add_argument(
             '-lr', '--learningrate', type=float, default=1,
+            help='learning rate')
+        agent.add_argument(
+            '-lr2', '--learningrate2', type=float, default=1,
             help='learning rate')
         agent.add_argument(
             '-clip', '--gradient-clip', type=float, default=0.1,
@@ -292,6 +299,10 @@ class TorchAgent(Agent):
 
         optim_class = self.OPTIM_OPTS[opt['optimizer']]
         self.optimizer = optim_class(params, **kwargs)
+
+        optim_class2 = self.OPTIM_OPTS[opt['optimizer2']]
+        self.optimizer2 = optim_class2(params, **kwargs)
+
         if optim_states:
             if saved_optim_type != opt['optimizer']:
                 print('WARNING: not loading optim state since optim class '

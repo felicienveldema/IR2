@@ -17,11 +17,14 @@ import torch.nn.functional as F
 
 from collections import defaultdict
 
+import itertools
 import os
 import math
 import json
 import tempfile
+import pickle
 
+PMI_THRESHOLD = 1
 
 class Seq2seqCustomAgent(TorchAgent):
     """Agent which takes an input sequence and produces an output sequence.
@@ -206,6 +209,9 @@ class Seq2seqCustomAgent(TorchAgent):
         """Initialize model, override to change model setup."""
         opt = self.opt
 
+        with open("data/Twitter/pmi.pkl", "rb") as f:
+            self.pmi = pickle.load(f)
+
         kwargs = opt_to_kwargs(opt)
         self.model = Seq2seq_custom(
             len(self.dict), opt['embeddingsize'], opt['hiddensize'],
@@ -220,6 +226,10 @@ class Seq2seqCustomAgent(TorchAgent):
             unknown_idx=self.dict[self.dict.unk_token],
             longest_label=states.get('longest_label', 1),
             **kwargs)
+
+        # Optimizer location:
+        # ParlAI\parlai\core\torch_agent
+        # print(self.optimizer2)
 
         if (opt.get('dict_tokenizer') == 'bpe' and
                 opt['embedding_type'] != 'random'):
@@ -246,13 +256,13 @@ class Seq2seqCustomAgent(TorchAgent):
 
         if self.use_cuda:
             self.model.cuda()
+            self.model2.cuda()
             if self.multigpu:
                 self.model = torch.nn.DataParallel(self.model)
                 self.model.encoder = self.model.module.encoder
                 self.model.decoder = self.model.module.decoder
                 self.model.longest_label = self.model.module.longest_label
                 self.model.output = self.model.module.output
-
         return self.model
 
     def _v2t(self, vec):
@@ -276,6 +286,16 @@ class Seq2seqCustomAgent(TorchAgent):
         if self.clip > 0:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
         self.optimizer.step()
+
+    def zero_grad_2(self):
+        """Zero out optimizer."""
+        self.optimizer2.zero_grad()
+
+    def update_params_2(self):
+        """Do one optimization step."""
+        if self.clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.model2.parameters(), self.clip)
+        self.optimizer2.step()
 
     def reset_metrics(self):
         """Reset metrics for reporting loss and perplexity."""
@@ -365,16 +385,39 @@ class Seq2seqCustomAgent(TorchAgent):
         # helps with memory usage
         self._init_cuda_buffer(self.model, self.criterion, batchsize,
                                self.truncate or 180)
+        self._init_cuda_buffer(self.model2, self.criterion, batchsize,
+                               self.truncate or 180)
+
         self.model.train()
+        self.model2.train()
+
         self.zero_grad()
+        self.zero_grad_2()
 
         try:
             seq_len = None if not self.multigpu else batch.text_vec.size(1)
             out = self.model(batch.text_vec, batch.label_vec, seq_len=seq_len)
-
             # generated response
             scores = out[0]
             _, preds = scores.max(2)
+
+            # Calculate pmi for input and prediction to get topic words
+            topic_words = []
+            for i, word_ids in enumerate(batch.text_vec):
+                # Convert ids to words
+                sentence = self._v2t(word_ids)
+                sentence_pred = self._v2t(preds[i])
+                # Permutations of words in input and prediction sentence
+                word_tuples = list(set(itertools.product(sentence.split(), sentence_pred.split())))
+                # Retrieve output words with pmi > threshold in combination with input words
+                topic_words.append(list(set([word_tuple[1] for word_tuple in word_tuples if self.pmi[tuple(sorted(word_tuple))] > PMI_THRESHOLD])))
+                # Ignore empty lists
+                if topic_words[i]:
+                    # Convert words back to indices
+                    topic_words[i] = torch.Tensor(self.dict.txt2vec(" ".join(topic_words[i])))
+
+            # Pad topic words with null index for passing as input
+            topic_words, _ = padded_tensor(topic_words, self.NULL_IDX, self.use_cuda)
 
             score_view = scores.view(-1, scores.size(-1))
             loss = self.criterion(score_view, batch.label_vec.view(-1))
@@ -382,12 +425,37 @@ class Seq2seqCustomAgent(TorchAgent):
             notnull = batch.label_vec.ne(self.NULL_IDX)
             target_tokens = notnull.long().sum().item()
             correct = ((batch.label_vec == preds) * notnull).sum().item()
-            self.metrics['correct_tokens'] += correct
-            self.metrics['loss'] += loss.item()
-            self.metrics['num_tokens'] += target_tokens
+            # self.metrics['correct_tokens'] += correct
+            # self.metrics['loss'] += loss.item()
+            # self.metrics['num_tokens'] += target_tokens
             loss /= target_tokens  # average loss per token
             loss.backward()
+
+            print(loss)
             self.update_params()
+
+            out = self.model2(topic_words.long(), batch.label_vec, seq_len=seq_len)
+            
+            scores = out[0]
+            _, preds = scores.max(2)
+            score_view = scores.view(-1, scores.size(-1))
+            loss2 = self.criterion(score_view, batch.label_vec.view(-1))
+            # save loss to metrics
+            notnull = batch.label_vec.ne(self.NULL_IDX)
+            target_tokens = notnull.long().sum().item()
+            correct = ((batch.label_vec == preds) * notnull).sum().item()
+            self.metrics['correct_tokens'] += correct
+            self.metrics['loss'] += loss2.item()
+            self.metrics['num_tokens'] += target_tokens
+            loss2 /= target_tokens  # average loss per token
+            loss2.backward()
+            self.update_params_2()
+
+            # # print output
+            # print([self._v2t(p) for p in preds])
+
+
+
         except RuntimeError as e:
             # catch out of memory exceptions during fwd/bck (skip batch)
             if 'out of memory' in str(e):

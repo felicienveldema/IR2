@@ -305,7 +305,6 @@ class Seq2seq_custom(nn.Module):
     def forward(self, xs, ys=None, cands=None, prev_enc=None, maxlen=None,
                 seq_len=None):
         scores, cand_scores, encoder_states = self.forward_step(xs, ys, cands, prev_enc, maxlen, seq_len)
-        print(scores)
         return scores, cand_scores, encoder_states
 
 

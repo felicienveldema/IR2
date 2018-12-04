@@ -1,0 +1,11 @@
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1212, 'loss': 5.418, 'ppl': 225.3}
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1212, 'loss': 5.416, 'ppl': 225.0}
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1212, 'loss': 5.416, 'ppl': 225.0}
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1212, 'loss': 5.416, 'ppl': 225.0}
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1212, 'loss': 5.416, 'ppl': 224.9}
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1212, 'loss': 5.411, 'ppl': 224.0}
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1212, 'loss': 5.412, 'ppl': 224.0}
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1212, 'loss': 5.412, 'ppl': 224.1}
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0.007138, 'bleu': 6.529e-12, 'token_acc': 0.1215, 'loss': 5.406, 'ppl': 222.8}
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1212, 'loss': 5.437, 'ppl': 229.8}
+valid:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1212, 'loss': 5.426, 'ppl': 227.3}
