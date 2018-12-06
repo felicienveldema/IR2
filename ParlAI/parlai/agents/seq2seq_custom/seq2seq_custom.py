@@ -10,12 +10,13 @@ from parlai.core.torch_agent import TorchAgent, Output, Beam
 from parlai.core.utils import padded_tensor, round_sigfigs
 from parlai.core.thread_utils import SharedTable
 from .modules import Seq2seq_custom, opt_to_kwargs
+from nltk.corpus import stopwords
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 import itertools
 import os
@@ -23,8 +24,12 @@ import math
 import json
 import tempfile
 import pickle
+import nltk
+import string
+
 
 PMI_THRESHOLD = 1
+TARGET_COUNT = 2
 
 class Seq2seqCustomAgent(TorchAgent):
     """Agent which takes an input sequence and produces an output sequence.
@@ -134,7 +139,7 @@ class Seq2seqCustomAgent(TorchAgent):
         if not shared:  # only do this on first setup
             # first check load path in case we need to override paths
             if opt.get('init_model') and os.path.isfile(opt['init_model']):
-                # check first for 'init_model' for loading model from file
+                # check first   for 'init_model' for loading model from file
                 init_model = opt['init_model']
             if opt.get('model_file') and os.path.isfile(opt['model_file']):
                 # next check for 'model_file', this would override init_model
@@ -148,6 +153,7 @@ class Seq2seqCustomAgent(TorchAgent):
         super().__init__(opt, shared)
         opt = self.opt
 
+        self.stopwords = set(stopwords.words('english'))
         # all instances may need some params
         self.id = 'Seq2Seq_custom'
         self.multigpu = (opt.get('multigpu') and self.use_cuda and
@@ -211,7 +217,7 @@ class Seq2seqCustomAgent(TorchAgent):
 
         with open("data/Twitter/pmi.pkl", "rb") as f:
             self.pmi = pickle.load(f)
-
+        self.ordered_pmi = OrderedDict(sorted(self.pmi.items(), key=lambda x:x[1], reverse=True))
         kwargs = opt_to_kwargs(opt)
         self.model = Seq2seq_custom(
             len(self.dict), opt['embeddingsize'], opt['hiddensize'],
@@ -379,6 +385,8 @@ class Seq2seqCustomAgent(TorchAgent):
     def train_step(self, batch):
         """Train on a single batch of examples."""
         batchsize = batch.text_vec.size(0)
+
+
         if self.multigpu and batchsize % 2 != 0:
             # throw out one training example
             batch = self.truncate_input(batch)
@@ -401,8 +409,10 @@ class Seq2seqCustomAgent(TorchAgent):
             scores = out[0]
             _, preds = scores.max(2)
 
+
             # Calculate pmi for input and prediction to get topic words
             topic_words = []
+            target_topic_words = []
             for i, word_ids in enumerate(batch.text_vec):
                 # Convert ids to words
                 sentence = self._v2t(word_ids)
@@ -415,12 +425,31 @@ class Seq2seqCustomAgent(TorchAgent):
                 if topic_words[i]:
                     # Convert words back to indices
                     topic_words[i] = torch.Tensor(self.dict.txt2vec(" ".join(topic_words[i])))
+                batch_target_topic_words = []
+                for word in sentence.split():
+                    if word != "__unk__" and word not in self.stopwords and word not in string.punctuation:
+                        count = 0
+                        for key in self.ordered_pmi.keys():
+                            if word in key:
+                                if word == key[0]:
+                                    batch_target_topic_words.append(self.dict.txt2vec(key[1]))
+                                else:
+                                    batch_target_topic_words.append(self.dict.txt2vec(key[0]))
+                                count += 1
+                            if count == TARGET_COUNT:
+                                break
+
+
+                target_topic_words.append(batch_target_topic_words)
+
+            #TODO: one-hothot encode
+            target_topic_words = torch.Tensor(target_topic_words)
+
 
             # Pad topic words with null index for passing as input
             topic_words, _ = padded_tensor(topic_words, self.NULL_IDX, self.use_cuda)
-
             score_view = scores.view(-1, scores.size(-1))
-            loss = self.criterion(score_view, batch.label_vec.view(-1))
+            loss = self.criterion(score_view, target_topic_words.view(-1))
             # save loss to metrics
             notnull = batch.label_vec.ne(self.NULL_IDX)
             target_tokens = notnull.long().sum().item()
@@ -434,6 +463,7 @@ class Seq2seqCustomAgent(TorchAgent):
             print(loss)
             self.update_params()
 
+            # Second model
             out = self.model2(topic_words.long(), batch.label_vec, seq_len=seq_len)
             
             scores = out[0]
