@@ -27,6 +27,7 @@ import tempfile
 import pickle
 import nltk
 import string
+import re
 
 
 PMI_THRESHOLD = 1
@@ -218,7 +219,10 @@ class Seq2seqCustomAgent(TorchAgent):
 
         with open("data/Twitter/pmi.pkl", "rb") as f:
             self.pmi = pickle.load(f)
-        self.ordered_pmi = OrderedDict(sorted(self.pmi.items(), key=lambda x:x[1], reverse=True))
+        with open("data/Twitter/pmi_nested.pkl", "rb") as f:
+            pmi_nested = pickle.load(f)
+            self.pmi_nested = {k: OrderedDict(sorted(v.items(), key=lambda x:x[1], reverse=True)) for k,v in pmi_nested.items()}
+        self.RETOK = re.compile(r'\w+|[^\w\s]|\n', re.UNICODE)
         kwargs = opt_to_kwargs(opt)
         self.model = Seq2seq_custom(
             len(self.dict), opt['embeddingsize'], opt['hiddensize'],
@@ -425,50 +429,28 @@ class Seq2seqCustomAgent(TorchAgent):
                 # Ignore empty lists
                 if topic_words[i]:
                     # Convert words back to indices
-                    topic_words[i] = torch.Tensor(self.dict.txt2vec(" ".join(topic_words[i])))
+                    ind = self.dict.txt2vec(" ".join(topic_words[i]))
+                    # TODO: use this index to construct new out 
+                    # Problem: order topic words does not matter but model outputs sequence of n words
+                    # So, which prob to use for a word of those 20 sequences
+                    topic_words[i] = torch.Tensor(ind)
                 batch_target_topic_words = []
-                for word in sentence.split():
-                    if word != "__unk__" and word not in self.stopwords and word not in string.punctuation:
-                        count = 0
-                        for key in self.ordered_pmi.keys():
-                            if word in key:
-                                # TODO TXT2VEC GIVES BACK 3 (__UNK__)?
-                                # TODO sometimes gives back two indices because not tokenized key
-                                # Waarschijnlijk een probleem dat pmi key niet hetzelfde is als woorden in dict
-                                # Door tokenizers etc
-                                # Enige wat ik kan bedenken is pmi aanpassen met tokenizers
-                                # Kan ook aan mijn dict liggen want volgens mij had jij dit niet
-                                # Als je die comments weghaald bij de printjes kan je de key + index zien
-                                if word == key[0]:
-                                    # Tijdelijke fix voor meerdere indices
-                                    for ind in self.dict.txt2vec(key[1]):
-                                        batch_target_topic_words.append(ind)
-                                    # print(key[1])
-                                    # print(self.dict.txt2vec(key[1]))
-                                    # batch_target_topic_words.append(self.dict.txt2vec(key[1]))
-                                else:
-                                    # Tijdelijke fix voor meerdere indices
-                                    for ind in self.dict.txt2vec(key[0]):
-                                        batch_target_topic_words.append(ind)
-                                    # batch_target_topic_words.append(self.dict.txt2vec(key[0]))
-                                    # print(key[0])
-                                    # print(self.dict.txt2vec(key[0]))
-                                count += 1
-                            if count == TARGET_COUNT:
-                                break
+                # TODO high pmi issues with misspelled words
+                for word in self.RETOK.findall(sentence):
+                    if word != "__unk__" and word != "__null__" and word not in self.stopwords and word not in string.punctuation:
+                        batch_target_topic_words.extend(list(self.pmi_nested[word].keys())[:TARGET_COUNT])
+                print(batch_target_topic_words)
                 target_topic_words.append(batch_target_topic_words)
-
 
             #TODO: different sequence length 
             target_topic_words, _ = padded_tensor(target_topic_words, self.NULL_IDX, self.use_cuda)   
 
             # TODO Moet array[3] = 1 zijn voor woord 3? 
             # TODO check if correct
-            print(self.onehot_initialization(target_topic_words).shape)
+            target_topic_words = self.onehot_initialization(target_topic_words)
 
             # Pad topic words with null index for passing as input
             topic_words, _ = padded_tensor(topic_words, self.NULL_IDX, self.use_cuda)
-            # TODO all scores 0 except where output topic words appear
             score_view = scores.view(-1, scores.size(-1))
             loss = self.criterion(score_view, target_topic_words.view(-1))
             # save loss to metrics

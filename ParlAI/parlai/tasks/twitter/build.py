@@ -14,6 +14,7 @@ except ImportError:
     raise ImportError('Please `pip install emoji unidecode` for the twitter task.')
 
 from collections import Counter, defaultdict
+from functools import partial
 
 import parlai.core.build_data as build_data
 import numpy as np
@@ -21,6 +22,7 @@ import pickle
 import nltk
 import math
 import os
+import re
 
 
 def replace_emoji(x):
@@ -47,10 +49,13 @@ def split_punctuation(x):
 
 
 def create_fb_format(data, dpath):
+    # Default tokenizer 
+    RETOK = re.compile(r'\w+|[^\w\s]|\n', re.UNICODE)
+
     fw1 = open(os.path.join(dpath, 'train.txt'), 'w')
     fw2 = open(os.path.join(dpath, 'valid.txt'), 'w')
     fw3 = open(os.path.join(dpath, 'test.txt'), 'w')
-    fw4 = open(os.path.join(dpath, 'pmi.pkl'), 'wb')
+    fw4 = open(os.path.join(dpath, 'pmi_tokenized.pkl'), 'wb')
 
     bigrams = []
     unigrams = []
@@ -71,20 +76,20 @@ def create_fb_format(data, dpath):
         x = split_punctuation(unidecode.unidecode(x))
         y = split_punctuation(unidecode.unidecode(y))
 
-        x = x.split()
-        y = y.split()
+        x_tokenized = RETOK.findall(x)
+        y_tokenized = RETOK.findall(y)
 
-        x_bigram = list(nltk.bigrams(x))
-        y_bigram = list(nltk.bigrams(y))
+        x_bigram = list(nltk.bigrams(x_tokenized))
+        y_bigram = list(nltk.bigrams(y_tokenized))
 
         bigrams.append(x_bigram)
         bigrams.append(y_bigram)
 
-        unigrams.append(x)
-        unigrams.append(y)
+        unigrams.append(x_tokenized)
+        unigrams.append(y_tokenized)
 
-        x = ' '.join(x)
-        y = ' '.join(y)
+        x = ' '.join(x.split())
+        y = ' '.join(y.split())
 
         if len(x) < 1 or len(y) < 1:
             use = False
@@ -103,9 +108,13 @@ def create_fb_format(data, dpath):
     for key in unigram_counter:
         unigram_counter[key] /= total_uni
 
+    # pmi = defaultdict(partial(defaultdict, float))
     pmi = defaultdict(float)
     for bigram, bigram_prob in bigram_counter.items():
-        pmi[bigram] = math.log(bigram_prob / (unigram_counter[bigram[0]]*unigram_counter[bigram[1]]))
+        result = math.log(bigram_prob / (unigram_counter[bigram[0]]*unigram_counter[bigram[1]]))
+        # pmi[bigram[0]][bigram[1]] = result
+        # pmi[bigram[1]][bigram[0]] = result
+        pmi[bigram] = result
 
     pickle.dump(pmi, fw4)
 

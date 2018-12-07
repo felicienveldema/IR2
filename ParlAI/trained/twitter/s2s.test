@@ -1,3 +1,0 @@
-test:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1222, 'loss': 5.418, 'ppl': 225.4}
-test:{'exs': 10405, 'accuracy': 0, 'f1': 0.0075, 'bleu': 6.804e-12, 'token_acc': 0.1226, 'loss': 5.405, 'ppl': 222.6}
-test:{'exs': 10405, 'accuracy': 0, 'f1': 0, 'bleu': 0, 'token_acc': 0.1222, 'loss': 5.427, 'ppl': 227.4}
