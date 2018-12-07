@@ -11,13 +11,14 @@ from parlai.core.utils import padded_tensor, round_sigfigs
 from parlai.core.thread_utils import SharedTable
 from .modules import Seq2seq_custom, opt_to_kwargs
 from nltk.corpus import stopwords
+from collections import defaultdict, OrderedDict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from collections import defaultdict, OrderedDict
 
+import numpy as np
 import itertools
 import os
 import math
@@ -431,23 +432,43 @@ class Seq2seqCustomAgent(TorchAgent):
                         count = 0
                         for key in self.ordered_pmi.keys():
                             if word in key:
+                                # TODO TXT2VEC GIVES BACK 3 (__UNK__)?
+                                # TODO sometimes gives back two indices because not tokenized key
+                                # Waarschijnlijk een probleem dat pmi key niet hetzelfde is als woorden in dict
+                                # Door tokenizers etc
+                                # Enige wat ik kan bedenken is pmi aanpassen met tokenizers
+                                # Kan ook aan mijn dict liggen want volgens mij had jij dit niet
+                                # Als je die comments weghaald bij de printjes kan je de key + index zien
                                 if word == key[0]:
-                                    batch_target_topic_words.append(self.dict.txt2vec(key[1]))
+                                    # Tijdelijke fix voor meerdere indices
+                                    for ind in self.dict.txt2vec(key[1]):
+                                        batch_target_topic_words.append(ind)
+                                    # print(key[1])
+                                    # print(self.dict.txt2vec(key[1]))
+                                    # batch_target_topic_words.append(self.dict.txt2vec(key[1]))
                                 else:
-                                    batch_target_topic_words.append(self.dict.txt2vec(key[0]))
+                                    # Tijdelijke fix voor meerdere indices
+                                    for ind in self.dict.txt2vec(key[0]):
+                                        batch_target_topic_words.append(ind)
+                                    # batch_target_topic_words.append(self.dict.txt2vec(key[0]))
+                                    # print(key[0])
+                                    # print(self.dict.txt2vec(key[0]))
                                 count += 1
                             if count == TARGET_COUNT:
                                 break
-
-
                 target_topic_words.append(batch_target_topic_words)
 
-            #TODO: one-hothot encode
-            target_topic_words = torch.Tensor(target_topic_words)
 
+            #TODO: different sequence length 
+            target_topic_words, _ = padded_tensor(target_topic_words, self.NULL_IDX, self.use_cuda)   
+
+            # TODO Moet array[3] = 1 zijn voor woord 3? 
+            # TODO check if correct
+            print(self.onehot_initialization(target_topic_words).shape)
 
             # Pad topic words with null index for passing as input
             topic_words, _ = padded_tensor(topic_words, self.NULL_IDX, self.use_cuda)
+            # TODO all scores 0 except where output topic words appear
             score_view = scores.view(-1, scores.size(-1))
             loss = self.criterion(score_view, target_topic_words.view(-1))
             # save loss to metrics
@@ -495,6 +516,21 @@ class Seq2seqCustomAgent(TorchAgent):
                 self.metrics['total_skipped_batches'] += 1
             else:
                 raise e
+
+    # https://stackoverflow.com/questions/1727669/contruct-3d-array-in-numpy-from-existing-2d-array
+    def onehot_initialization(self, a):
+        a = a.numpy()
+        ncols = len(self.dict)
+        for i, batch in enumerate(a):
+            one_hot = np.zeros((batch.size,ncols), dtype=np.uint8)
+            one_hot[np.arange(batch.size), batch] = 1
+            if i == 0:
+                out = one_hot.copy()
+            elif i == 1:
+                out = np.stack((out, one_hot))
+            else:
+                out = np.vstack((out, one_hot[np.newaxis,...]))
+        return torch.Tensor(out)
 
     def _build_cands(self, batch):
         if not batch.candidates:
