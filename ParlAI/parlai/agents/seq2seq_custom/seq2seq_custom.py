@@ -198,12 +198,17 @@ class Seq2seqCustomAgent(TorchAgent):
         if opt.get('numsoftmax', 1) > 1:
             self.criterion = nn.NLLLoss(
                 ignore_index=self.NULL_IDX, size_average=False)
+            self.criterion1 = nn.BCELoss(ignore_index=self.NULL_IDX, size_average=False)
+
         else:
             self.criterion = nn.CrossEntropyLoss(
                 ignore_index=self.NULL_IDX, size_average=False)
+            self.criterion1 = nn.BCEWithLogitsLoss()
+
 
         if self.use_cuda:
             self.criterion.cuda()
+            self.criterion1.cuda()
 
         if 'train' in opt.get('datatype', ''):
             self.init_optim(
@@ -391,13 +396,12 @@ class Seq2seqCustomAgent(TorchAgent):
         """Train on a single batch of examples."""
         batchsize = batch.text_vec.size(0)
 
-
         if self.multigpu and batchsize % 2 != 0:
             # throw out one training example
             batch = self.truncate_input(batch)
         # helps with memory usage
-        self._init_cuda_buffer(self.model, self.criterion, batchsize,
-                               self.truncate or 180)
+        # self._init_cuda_buffer(self.model, self.criterion1, batchsize,
+        #                        self.truncate or 180)
         self._init_cuda_buffer(self.model2, self.criterion, batchsize,
                                self.truncate or 180)
 
@@ -409,15 +413,29 @@ class Seq2seqCustomAgent(TorchAgent):
 
         try:
             seq_len = None if not self.multigpu else batch.text_vec.size(1)
-            out = self.model(batch.text_vec, batch.label_vec, seq_len=seq_len)
+            target_topic_words = []
+            for i, word_ids in enumerate(batch.text_vec):
+                # Convert ids to words
+                sentence = self._v2t(word_ids)
+                batch_top_n_vec = []
+                # TODO high pmi issues with misspelled words
+                for word in self.RETOK.findall(sentence):
+                    if word != "__unk__" and word != "__null__" and word not in self.stopwords and word not in string.punctuation:
+                        top_n_target = list(self.pmi_nested[word].keys())[:TARGET_COUNT]
+                        for top_word in top_n_target:
+                            batch_top_n_vec.extend(self.dict.txt2vec(top_word))
+                target_topic_words.append(batch_top_n_vec)
+            
+            target_topic_words, _ = padded_tensor(target_topic_words, self.NULL_IDX, self.use_cuda)   
+            out = self.model(batch.text_vec, target_topic_words, seq_len=seq_len)
             # generated response
             scores = out[0]
             _, preds = scores.max(2)
 
-
             # Calculate pmi for input and prediction to get topic words
             topic_words = []
-            target_topic_words = []
+            output_probs = scores.clone()
+            output_probs[output_probs!=0] = 0
             for i, word_ids in enumerate(batch.text_vec):
                 # Convert ids to words
                 sentence = self._v2t(word_ids)
@@ -433,30 +451,32 @@ class Seq2seqCustomAgent(TorchAgent):
                     # TODO: use this index to construct new out 
                     # Problem: order topic words does not matter but model outputs sequence of n words
                     # So, which prob to use for a word of those 20 sequences
-                    topic_words[i] = torch.Tensor(ind)
-                batch_target_topic_words = []
-                # TODO high pmi issues with misspelled words
-                for word in self.RETOK.findall(sentence):
-                    if word != "__unk__" and word != "__null__" and word not in self.stopwords and word not in string.punctuation:
-                        batch_target_topic_words.extend(list(self.pmi_nested[word].keys())[:TARGET_COUNT])
-                print(batch_target_topic_words)
-                target_topic_words.append(batch_target_topic_words)
+                    if self.use_cuda:
+                        topic_words[i] = torch.LongTensor(ind).cuda()
+                    else:
+                        topic_words[i] = torch.LongTensor(ind)
+                for j, word in enumerate(target_topic_words[i]):
+                    if word in topic_words[i]:
+                        output_probs[i][j][self.dict.txt2vec(word)] = scores[i][j][self.dict.txt2vec(word)]
 
-            #TODO: different sequence length 
-            target_topic_words, _ = padded_tensor(target_topic_words, self.NULL_IDX, self.use_cuda)   
+
+            #TODO: different sequence length
 
             # TODO Moet array[3] = 1 zijn voor woord 3? 
             # TODO check if correct
-            target_topic_words = self.onehot_initialization(target_topic_words)
+            notnull = target_topic_words.ne(self.NULL_IDX)
+            target_tokens = notnull.long().sum().item()
 
+            target_topic_words = self.onehot_initialization(target_topic_words)
             # Pad topic words with null index for passing as input
             topic_words, _ = padded_tensor(topic_words, self.NULL_IDX, self.use_cuda)
-            score_view = scores.view(-1, scores.size(-1))
-            loss = self.criterion(score_view, target_topic_words.view(-1))
+            # output_view = output_probs.view(-1, output_probs.size(-1)).shape
+            # print(target_topic_words.view(-1).shape)
+            # print(batch.label_vec.shape)
+            loss = self.criterion1(output_probs, target_topic_words)
             # save loss to metrics
-            notnull = batch.label_vec.ne(self.NULL_IDX)
-            target_tokens = notnull.long().sum().item()
-            correct = ((batch.label_vec == preds) * notnull).sum().item()
+
+            # correct = ((batch.label_vec == preds) * notnull).sum().item()
             # self.metrics['correct_tokens'] += correct
             # self.metrics['loss'] += loss.item()
             # self.metrics['num_tokens'] += target_tokens
@@ -501,7 +521,7 @@ class Seq2seqCustomAgent(TorchAgent):
 
     # https://stackoverflow.com/questions/1727669/contruct-3d-array-in-numpy-from-existing-2d-array
     def onehot_initialization(self, a):
-        a = a.numpy()
+        a = a.cpu().numpy()
         ncols = len(self.dict)
         for i, batch in enumerate(a):
             one_hot = np.zeros((batch.size,ncols), dtype=np.uint8)
@@ -512,7 +532,10 @@ class Seq2seqCustomAgent(TorchAgent):
                 out = np.stack((out, one_hot))
             else:
                 out = np.vstack((out, one_hot[np.newaxis,...]))
-        return torch.Tensor(out)
+        if self.use_cuda:
+            return torch.Tensor(out).cuda()
+        else:
+            return torch.Tensor(out)
 
     def _build_cands(self, batch):
         if not batch.candidates:
