@@ -33,7 +33,7 @@ import re
 
 
 PMI_THRESHOLD = 1
-TARGET_COUNT = 2
+TARGET_COUNT = 3
 
 class Seq2seqCustomAgent(TorchAgent):
     """Agent which takes an input sequence and produces an output sequence.
@@ -200,12 +200,12 @@ class Seq2seqCustomAgent(TorchAgent):
         if opt.get('numsoftmax', 1) > 1:
             self.criterion = nn.NLLLoss(
                 ignore_index=self.NULL_IDX, size_average=False)
-            self.criterion1 = nn.BCELoss(   size_average=False)
+            # self.criterion1 = nn.BCELoss(   size_average=False)
 
         else:
             self.criterion = nn.CrossEntropyLoss(
                 ignore_index=self.NULL_IDX, size_average=False)
-            self.criterion1 = nn.BCEWithLogitsLoss()
+            # self.criterion1 = nn.BCEWithLogitsLoss()
 
 
         if self.use_cuda:
@@ -433,7 +433,6 @@ class Seq2seqCustomAgent(TorchAgent):
                             if len(batch_top_n_vec) > TARGET_COUNT-1:
                                 break
                 target_topic_words.append(batch_top_n_vec)
-            print(target_topic_words)
             # target_topic_words = torch.Tensor(target_topic_words).cuda()
             target_topic_words, _ = padded_tensor(target_topic_words, self.NULL_IDX, self.use_cuda)   
             out = self.model(batch.text_vec, target_topic_words, seq_len=seq_len)
@@ -466,10 +465,10 @@ class Seq2seqCustomAgent(TorchAgent):
 
                 # Force the model to predict target words
                 indices_used = []
-                print("Prediction:")
-                print(preds[i])
-                print("Targets:")
-                print(target_topic_words[i])
+                # print("Prediction:")
+                # print(preds[i])
+                # print("Targets:")
+                # print(target_topic_words[i])
                 for j, word in enumerate(preds[i]):
                     if word in target_topic_words[i]:
                         index_word = np.where(target_topic_words[i].numpy() == word)[0][0]
@@ -482,20 +481,15 @@ class Seq2seqCustomAgent(TorchAgent):
                             if k not in indices_used:
                                 target_topic_words[i][j], target_topic_words[i][k] = int(target_topic_words[i][k]), int(target_topic_words[i][j])
                                 break
-            #TODO: different sequence length
 
-            # TODO Moet array[3] = 1 zijn voor woord 3? 
-            # TODO check if correct
             notnull = target_topic_words.ne(self.NULL_IDX)
             target_tokens = notnull.long().sum().item()
 
-            target_topic_words = self.onehot_initialization(target_topic_words)
+            # target_topic_words = self.onehot_initialization(target_topic_words)
             # Pad topic words with null index for passing as input
             topic_words, _ = padded_tensor(topic_words, self.NULL_IDX, self.use_cuda)
             # output_view = output_probs.view(-1, output_probs.size(-1)).shape
-            # print(target_topic_words.view(-1).shape)
-            # print(batch.label_vec s.shape)
-            loss = self.criterion(scores, target_topic_words)
+            loss = self.criterion(scores.view(-1, scores.size(-1)), target_topic_words.view(-1))
             # save loss to metrics
 
             # correct = ((batch.label_vec == preds) * notnull).sum().item()
@@ -505,12 +499,10 @@ class Seq2seqCustomAgent(TorchAgent):
             loss /= target_tokens  # average loss per token
             loss.backward()
 
-            print(loss)
             self.update_params()
 
             # Second model
             out = self.model2(topic_words.long(), batch.label_vec, seq_len=seq_len)
-            
             scores = out[0]
             _, preds = scores.max(2)
             score_view = scores.view(-1, scores.size(-1))
