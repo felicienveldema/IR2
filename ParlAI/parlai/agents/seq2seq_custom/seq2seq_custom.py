@@ -12,6 +12,8 @@ from parlai.core.thread_utils import SharedTable
 from .modules import Seq2seq_custom, opt_to_kwargs
 from nltk.corpus import stopwords
 from collections import defaultdict, OrderedDict
+from nltk.tokenize import TweetTokenizer
+
 
 import torch
 import torch.nn as nn
@@ -198,7 +200,7 @@ class Seq2seqCustomAgent(TorchAgent):
         if opt.get('numsoftmax', 1) > 1:
             self.criterion = nn.NLLLoss(
                 ignore_index=self.NULL_IDX, size_average=False)
-            self.criterion1 = nn.BCELoss(ignore_index=self.NULL_IDX, size_average=False)
+            self.criterion1 = nn.BCELoss(   size_average=False)
 
         else:
             self.criterion = nn.CrossEntropyLoss(
@@ -227,7 +229,8 @@ class Seq2seqCustomAgent(TorchAgent):
         with open("data/Twitter/pmi_nested.pkl", "rb") as f:
             pmi_nested = pickle.load(f)
             self.pmi_nested = {k: OrderedDict(sorted(v.items(), key=lambda x:x[1], reverse=True)) for k,v in pmi_nested.items()}
-        self.RETOK = re.compile(r'\w+|[^\w\s]|\n', re.UNICODE)
+        # self.RETOK = re.compile(r'\w+|[^\w\s]|\n', re.UNICODE)
+        self.RETOK = TweetTokenizer()
         kwargs = opt_to_kwargs(opt)
         self.model = Seq2seq_custom(
             len(self.dict), opt['embeddingsize'], opt['hiddensize'],
@@ -419,19 +422,24 @@ class Seq2seqCustomAgent(TorchAgent):
                 sentence = self._v2t(word_ids)
                 batch_top_n_vec = []
                 # TODO high pmi issues with misspelled words
-                for word in self.RETOK.findall(sentence):
-                    if word != "__unk__" and word != "__null__" and word not in self.stopwords and word not in string.punctuation:
-                        top_n_target = list(self.pmi_nested[word].keys())[:TARGET_COUNT]
-                        for top_word in top_n_target:
-                            batch_top_n_vec.extend(self.dict.txt2vec(top_word))
+                for word in self.RETOK.tokenize(sentence):
+                    if word != "__unk__" and word != "__null__" and word not in self.stopwords and word not in string.punctuation and word in self.pmi_nested.keys():
+                        # top_n_target = list(self.pmi_nested[word].keys())[:TARGET_COUNT]
+                        for top_word in list(self.pmi_nested[word].keys()):
+                        # print(top_n_target)
+                            if self.dict[self.dict.unk_token] not in self.dict.txt2vec(top_word) and 0 not in self.dict.txt2vec(top_word):
+                                top_word_vec = self.dict.txt2vec(top_word)
+                                batch_top_n_vec.extend(top_word_vec)
+                            if len(batch_top_n_vec) > TARGET_COUNT-1:
+                                break
                 target_topic_words.append(batch_top_n_vec)
-            
+            print(target_topic_words)
+            # target_topic_words = torch.Tensor(target_topic_words).cuda()
             target_topic_words, _ = padded_tensor(target_topic_words, self.NULL_IDX, self.use_cuda)   
             out = self.model(batch.text_vec, target_topic_words, seq_len=seq_len)
             # generated response
             scores = out[0]
             _, preds = scores.max(2)
-
             # Calculate pmi for input and prediction to get topic words
             topic_words = []
             output_probs = scores.clone()
@@ -455,11 +463,25 @@ class Seq2seqCustomAgent(TorchAgent):
                         topic_words[i] = torch.LongTensor(ind).cuda()
                     else:
                         topic_words[i] = torch.LongTensor(ind)
-                for j, word in enumerate(target_topic_words[i]):
-                    if word in topic_words[i]:
-                        output_probs[i][j][self.dict.txt2vec(word)] = scores[i][j][self.dict.txt2vec(word)]
 
-
+                # Force the model to predict target words
+                indices_used = []
+                print("Prediction:")
+                print(preds[i])
+                print("Targets:")
+                print(target_topic_words[i])
+                for j, word in enumerate(preds[i]):
+                    if word in target_topic_words[i]:
+                        index_word = np.where(target_topic_words[i].numpy() == word)[0][0]
+                        target_topic_words[i][j], target_topic_words[i][index_word] = int(target_topic_words[i][index_word]), int(target_topic_words[i][j])
+                        indices_used.append(j)
+                # Reorder target words to suppress non topic words
+                for j, word in enumerate(preds[i]):
+                    if word not in target_topic_words[i]:
+                        for k in range(len(target_topic_words[i])):
+                            if k not in indices_used:
+                                target_topic_words[i][j], target_topic_words[i][k] = int(target_topic_words[i][k]), int(target_topic_words[i][j])
+                                break
             #TODO: different sequence length
 
             # TODO Moet array[3] = 1 zijn voor woord 3? 
@@ -472,8 +494,8 @@ class Seq2seqCustomAgent(TorchAgent):
             topic_words, _ = padded_tensor(topic_words, self.NULL_IDX, self.use_cuda)
             # output_view = output_probs.view(-1, output_probs.size(-1)).shape
             # print(target_topic_words.view(-1).shape)
-            # print(batch.label_vec.shape)
-            loss = self.criterion1(output_probs, target_topic_words)
+            # print(batch.label_vec s.shape)
+            loss = self.criterion(scores, target_topic_words)
             # save loss to metrics
 
             # correct = ((batch.label_vec == preds) * notnull).sum().item()

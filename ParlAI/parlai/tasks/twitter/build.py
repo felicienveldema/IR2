@@ -15,6 +15,7 @@ except ImportError:
 
 from collections import Counter, defaultdict
 from functools import partial
+from nltk.tokenize import TweetTokenizer
 
 import parlai.core.build_data as build_data
 import numpy as np
@@ -50,16 +51,19 @@ def split_punctuation(x):
 
 def create_fb_format(data, dpath):
     # Default tokenizer 
-    RETOK = re.compile(r'\w+|[^\w\s]|\n', re.UNICODE)
+    # RETOK = re.compile(r'\w+|[^\w\s]|\n', re.UNICODE)
+    RETOK = TweetTokenizer()
 
     fw1 = open(os.path.join(dpath, 'train.txt'), 'w')
     fw2 = open(os.path.join(dpath, 'valid.txt'), 'w')
     fw3 = open(os.path.join(dpath, 'test.txt'), 'w')
     fw4 = open(os.path.join(dpath, 'pmi_tokenized.pkl'), 'wb')
+    fw5 = open(os.path.join(dpath, 'pmi_tokenized_nested.pkl'), 'wb')
+
 
     bigrams = []
     unigrams = []
-
+    print("HERE")
     for i in range(0, len(data) - 1, 2):
         fout = fw1
         if (i % 500) == 0:
@@ -76,8 +80,10 @@ def create_fb_format(data, dpath):
         x = split_punctuation(unidecode.unidecode(x))
         y = split_punctuation(unidecode.unidecode(y))
 
-        x_tokenized = RETOK.findall(x)
-        y_tokenized = RETOK.findall(y)
+        # x_tokenized = RETOK.findall(x)
+        # y_tokenized = RETOK.findall(y)
+        x_tokenized = RETOK.tokenize(x)
+        y_tokenized = RETOK.tokenize(y)
 
         x_bigram = list(nltk.bigrams(x_tokenized))
         y_bigram = list(nltk.bigrams(y_tokenized))
@@ -108,20 +114,22 @@ def create_fb_format(data, dpath):
     for key in unigram_counter:
         unigram_counter[key] /= total_uni
 
-    # pmi = defaultdict(partial(defaultdict, float))
+    pmi_nested = defaultdict(partial(defaultdict, float))
     pmi = defaultdict(float)
     for bigram, bigram_prob in bigram_counter.items():
         result = math.log(bigram_prob / (unigram_counter[bigram[0]]*unigram_counter[bigram[1]]))
-        # pmi[bigram[0]][bigram[1]] = result
-        # pmi[bigram[1]][bigram[0]] = result
+        pmi_nested[bigram[0]][bigram[1]] = result
+        pmi_nested[bigram[1]][bigram[0]] = result
         pmi[bigram] = result
 
     pickle.dump(pmi, fw4)
+    pickle.dump(pmi_nested, fw5)
 
     fw1.close()
     fw2.close()
     fw3.close()
     fw4.close()
+    fw5.close()
 
 
 def build(opt):
