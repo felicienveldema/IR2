@@ -57,8 +57,8 @@ def create_fb_format(data, dpath):
     fw1 = open(os.path.join(dpath, 'train.txt'), 'w')
     fw2 = open(os.path.join(dpath, 'valid.txt'), 'w')
     fw3 = open(os.path.join(dpath, 'test.txt'), 'w')
-    fw4 = open(os.path.join(dpath, 'pmi_tokenized.pkl'), 'wb')
-    fw5 = open(os.path.join(dpath, 'pmi_tokenized_nested.pkl'), 'wb')
+    # fw4 = open(os.path.join(dpath, 'pmi_tokenized.pkl'), 'wb')
+    # fw5 = open(os.path.join(dpath, 'pmi_tokenized_nested.pkl'), 'wb')
 
 
     bigrams = []
@@ -80,19 +80,17 @@ def create_fb_format(data, dpath):
         x = split_punctuation(unidecode.unidecode(x))
         y = split_punctuation(unidecode.unidecode(y))
 
-        # x_tokenized = RETOK.findall(x)
-        # y_tokenized = RETOK.findall(y)
-        x_tokenized = RETOK.tokenize(x)
-        y_tokenized = RETOK.tokenize(y)
+        # x_tokenized = RETOK.tokenize(x)
+        # y_tokenized = RETOK.tokenize(y)
 
-        x_bigram = list(nltk.bigrams(x_tokenized))
-        y_bigram = list(nltk.bigrams(y_tokenized))
+        # x_bigram = list(nltk.bigrams(x_tokenized))
+        # y_bigram = list(nltk.bigrams(y_tokenized))
 
-        bigrams.append(x_bigram)
-        bigrams.append(y_bigram)
+        # bigrams.append(x_bigram)
+        # bigrams.append(y_bigram)
 
-        unigrams.append(x_tokenized)
-        unigrams.append(y_tokenized)
+        # unigrams.append(x_tokenized)
+        # unigrams.append(y_tokenized)
 
         x = ' '.join(x.split())
         y = ' '.join(y.split())
@@ -103,33 +101,33 @@ def create_fb_format(data, dpath):
             s = 'text:' + x + '\tlabels:' + y + '\tepisode_done:True'
             fout.write('{} \n'.format(s))
 
-    bigram_counter = Counter([tuple(sorted(bigram)) for bigram_sublist in bigrams for bigram in bigram_sublist])
-    unigram_counter = Counter([unigram for unigram_sublist in unigrams for unigram in unigram_sublist])
+    # bigram_counter = Counter([tuple(sorted(bigram)) for bigram_sublist in bigrams for bigram in bigram_sublist])
+    # unigram_counter = Counter([unigram for unigram_sublist in unigrams for unigram in unigram_sublist])
 
-    total_bi = sum(bigram_counter.values(), 0.0)
-    for key in bigram_counter:
-        bigram_counter[key] /= total_bi
+    # total_bi = sum(bigram_counter.values(), 0.0)
+    # for key in bigram_counter:
+    #     bigram_counter[key] /= total_bi
 
-    total_uni = sum(unigram_counter.values(), 0.0)
-    for key in unigram_counter:
-        unigram_counter[key] /= total_uni
+    # total_uni = sum(unigram_counter.values(), 0.0)
+    # for key in unigram_counter:
+    #     unigram_counter[key] /= total_uni
 
-    pmi_nested = defaultdict(partial(defaultdict, float))
-    pmi = defaultdict(float)
-    for bigram, bigram_prob in bigram_counter.items():
-        result = math.log(bigram_prob / (unigram_counter[bigram[0]]*unigram_counter[bigram[1]]))
-        pmi_nested[bigram[0]][bigram[1]] = result
-        pmi_nested[bigram[1]][bigram[0]] = result
-        pmi[bigram] = result
+    # pmi_nested = defaultdict(partial(defaultdict, float))
+    # pmi = defaultdict(float)
+    # for bigram, bigram_prob in bigram_counter.items():
+    #     result = math.log(bigram_prob / (unigram_counter[bigram[0]]*unigram_counter[bigram[1]]))
+    #     pmi_nested[bigram[0]][bigram[1]] = result
+    #     pmi_nested[bigram[1]][bigram[0]] = result
+    #     pmi[bigram] = result
 
-    pickle.dump(pmi, fw4)
-    pickle.dump(pmi_nested, fw5)
+    # pickle.dump(pmi, fw4)
+    # pickle.dump(pmi_nested, fw5)
 
     fw1.close()
     fw2.close()
     fw3.close()
-    fw4.close()
-    fw5.close()
+    # fw4.close()
+    # fw5.close()
 
 
 def build(opt):

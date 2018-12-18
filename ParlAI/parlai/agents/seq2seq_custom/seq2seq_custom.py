@@ -11,8 +11,9 @@ from parlai.core.utils import padded_tensor, round_sigfigs
 from parlai.core.thread_utils import SharedTable
 from .modules import Seq2seq_custom, opt_to_kwargs
 from nltk.corpus import stopwords
-from collections import defaultdict, OrderedDict
+from collections import defaultdict, OrderedDict, Counter
 from nltk.tokenize import TweetTokenizer
+from functools import partial
 
 
 import torch
@@ -34,6 +35,7 @@ import re
 
 PMI_THRESHOLD = 1
 TARGET_COUNT = 3
+TOTAL_TARGET_COUNT = 5
 
 class Seq2seqCustomAgent(TorchAgent):
     """Agent which takes an input sequence and produces an output sequence.
@@ -223,14 +225,65 @@ class Seq2seqCustomAgent(TorchAgent):
     def _init_model(self, states=None):
         """Initialize model, override to change model setup."""
         opt = self.opt
+        self.RETOK = TweetTokenizer()
+        if not os.path.isfile("data/Twitter/pmi_nested_ids.pkl"):
+            fw4 = open(os.path.join('data/Twitter/pmi_ids.pkl'), 'wb')
+            fw5 = open(os.path.join('data/Twitter/pmi_nested_ids.pkl'), 'wb')
+            print("GENERATING UNIGRAM BIGRAM COUNTER")
+            with open("data/Twitter/train.txt") as f:
+                bigram_counter = Counter()
+                unigram_counter = Counter()
+                for line in f.readlines():
+                    line = line.split('\t')
+                    text_word_ids = self._vectorize_text(line[0][5:]).numpy()
+                    label_word_ids = self._vectorize_text(line[1][7:]).numpy()
 
+                    x_bigram = list(nltk.bigrams(text_word_ids))  
+                    y_bigram = list(nltk.bigrams(label_word_ids))
+
+                    for bigram in x_bigram:
+                        bigram_counter[tuple(sorted(bigram))] += 1      
+                    for bigram in y_bigram:
+                        bigram_counter[tuple(sorted(bigram))] += 1      
+                    for unigram in text_word_ids:
+                        unigram_counter[unigram] += 1  
+                    for unigram in label_word_ids:
+                        unigram_counter[unigram] += 1
+
+            print("CALCULATING UNIGRAM/BIGRAM PROBABILITIES")
+            total_bi = sum(bigram_counter.values(), 0.0)
+            for key in bigram_counter:
+                bigram_counter[key] /= total_bi
+
+            total_uni = sum(unigram_counter.values(), 0.0)
+            for key in unigram_counter:
+                unigram_counter[key] /= total_uni
+
+            print("CREATING PMI MODEL")
+            pmi_nested = defaultdict(partial(defaultdict, float))
+            pmi = defaultdict(float)
+            for bigram, bigram_prob in bigram_counter.items():
+                result = math.log(bigram_prob / (unigram_counter[bigram[0]]*unigram_counter[bigram[1]]))
+                pmi_nested[bigram[0]][bigram[1]] = result
+                pmi_nested[bigram[1]][bigram[0]] = result
+                pmi[bigram] = result
+
+            print("SAVING PMI MODEL")
+
+            pickle.dump(pmi, fw4)
+            pickle.dump(pmi_nested, fw5)
+
+            print("-----------------------DONE MAKING PMI DICTIONARIES-----------------------")
+        else:
+            print("Already made PMI model...")
+        # TODO use pmi id model
         with open("data/Twitter/pmi.pkl", "rb") as f:
             self.pmi = pickle.load(f)
+            print(self.pmi_id)
         with open("data/Twitter/pmi_nested.pkl", "rb") as f:
             pmi_nested = pickle.load(f)
             self.pmi_nested = {k: OrderedDict(sorted(v.items(), key=lambda x:x[1], reverse=True)) for k,v in pmi_nested.items()}
         # self.RETOK = re.compile(r'\w+|[^\w\s]|\n', re.UNICODE)
-        self.RETOK = TweetTokenizer()
         kwargs = opt_to_kwargs(opt)
         self.model = Seq2seq_custom(
             len(self.dict), opt['embeddingsize'], opt['hiddensize'],
@@ -414,50 +467,53 @@ class Seq2seqCustomAgent(TorchAgent):
         self.zero_grad()
         self.zero_grad_2()
 
+        # REMEMBER: _txt2vec needs string not list
         try:
             seq_len = None if not self.multigpu else batch.text_vec.size(1)
             target_topic_words = []
+            # Retrieve target topic words
             for i, word_ids in enumerate(batch.text_vec):
                 # Convert ids to words
                 sentence = self._v2t(word_ids)
                 batch_top_n_vec = []
-                # TODO high pmi issues with misspelled words
-                for word in self.RETOK.tokenize(sentence):
+                for word_id in word_ids:
+                    word = self._v2t(torch.FloatTensor([word_id]))
                     if word != "__unk__" and word != "__null__" and word not in self.stopwords and word not in string.punctuation and word in self.pmi_nested.keys():
-                        # top_n_target = list(self.pmi_nested[word].keys())[:TARGET_COUNT]
-                        for top_word in list(self.pmi_nested[word].keys()):
-                        # print(top_n_target)
-                            if self.dict[self.dict.unk_token] not in self.dict.txt2vec(top_word) and 0 not in self.dict.txt2vec(top_word):
-                                top_word_vec = self.dict.txt2vec(top_word)
-                                batch_top_n_vec.extend(top_word_vec)
+                        for top_word, top_value in list(self.pmi_nested[word].items()):
+                            top_word_vec = self.dict.txt2vec(top_word)
+                            if self.dict[self.dict.unk_token] not in top_word_vec and 0 not in top_word_vec:
+                                for w in top_word_vec:
+                                    batch_top_n_vec.append((w, top_value))
                             if len(batch_top_n_vec) > TARGET_COUNT-1:
                                 break
-                target_topic_words.append(batch_top_n_vec)
-            # target_topic_words = torch.Tensor(target_topic_words).cuda()
+                sorted_batch_top_n_vec = list(sorted(batch_top_n_vec, key=lambda x:x[1], reverse=True))
+                if len(sorted_batch_top_n_vec) >= TOTAL_TARGET_COUNT: 
+                    sorted_batch_top_n_vec = sorted_batch_top_n_vec[:TOTAL_TARGET_COUNT]
+                target_topic_words.append([entry[0] for entry in sorted_batch_top_n_vec])
+
             target_topic_words, _ = padded_tensor(target_topic_words, self.NULL_IDX, self.use_cuda)   
             out = self.model(batch.text_vec, target_topic_words, seq_len=seq_len)
+           
             # generated response
             scores = out[0]
             _, preds = scores.max(2)
+
             # Calculate pmi for input and prediction to get topic words
             topic_words = []
-            output_probs = scores.clone()
-            output_probs[output_probs!=0] = 0
             for i, word_ids in enumerate(batch.text_vec):
-                # Convert ids to words
-                sentence = self._v2t(word_ids)
-                sentence_pred = self._v2t(preds[i])
-                # Permutations of words in input and prediction sentence
-                word_tuples = list(set(itertools.product(sentence.split(), sentence_pred.split())))
+                batch_topic_words = Counter()
+                for pred_id in set(preds[i]):
+                    pred = self._v2t(torch.FloatTensor([pred_id]))
+                    pmi_sum = 0
+                    for word_id in set(word_ids):
+                        word = self._v2t(torch.FloatTensor([word_id]))
+                        batch_topic_words[pred] += self.pmi[tuple(sorted((pred, word)))]
+                topic_words.append([w[0] for w in batch_topic_words.most_common(TOTAL_TARGET_COUNT)])
                 # Retrieve output words with pmi > threshold in combination with input words
-                topic_words.append(list(set([word_tuple[1] for word_tuple in word_tuples if self.pmi[tuple(sorted(word_tuple))] > PMI_THRESHOLD])))
                 # Ignore empty lists
                 if topic_words[i]:
                     # Convert words back to indices
                     ind = self.dict.txt2vec(" ".join(topic_words[i]))
-                    # TODO: use this index to construct new out 
-                    # Problem: order topic words does not matter but model outputs sequence of n words
-                    # So, which prob to use for a word of those 20 sequences
                     if self.use_cuda:
                         topic_words[i] = torch.LongTensor(ind).cuda()
                     else:
