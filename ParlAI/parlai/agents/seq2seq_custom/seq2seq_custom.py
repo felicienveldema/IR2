@@ -225,6 +225,7 @@ class Seq2seqCustomAgent(TorchAgent):
     def _init_model(self, states=None):
         """Initialize model, override to change model setup."""
         opt = self.opt
+        self.UNK_IDX = 3
         self.RETOK = TweetTokenizer()
         if not os.path.isfile("data/Twitter/pmi_nested_ids.pkl"):
             fw4 = open(os.path.join('data/Twitter/pmi_ids.pkl'), 'wb')
@@ -277,10 +278,9 @@ class Seq2seqCustomAgent(TorchAgent):
         else:
             print("Already made PMI model...")
         # TODO use pmi id model
-        with open("data/Twitter/pmi.pkl", "rb") as f:
+        with open("data/Twitter/pmi_ids.pkl", "rb") as f:
             self.pmi = pickle.load(f)
-            print(self.pmi_id)
-        with open("data/Twitter/pmi_nested.pkl", "rb") as f:
+        with open("data/Twitter/pmi_nested_ids.pkl", "rb") as f:
             pmi_nested = pickle.load(f)
             self.pmi_nested = {k: OrderedDict(sorted(v.items(), key=lambda x:x[1], reverse=True)) for k,v in pmi_nested.items()}
         # self.RETOK = re.compile(r'\w+|[^\w\s]|\n', re.UNICODE)
@@ -470,27 +470,35 @@ class Seq2seqCustomAgent(TorchAgent):
         # REMEMBER: _txt2vec needs string not list
         try:
             seq_len = None if not self.multigpu else batch.text_vec.size(1)
-            target_topic_words = []
+
             # Retrieve target topic words
+            target_topic_words = []
             for i, word_ids in enumerate(batch.text_vec):
                 # Convert ids to words
-                sentence = self._v2t(word_ids)
                 batch_top_n_vec = []
                 for word_id in word_ids:
-                    word = self._v2t(torch.FloatTensor([word_id]))
-                    if word != "__unk__" and word != "__null__" and word not in self.stopwords and word not in string.punctuation and word in self.pmi_nested.keys():
-                        for top_word, top_value in list(self.pmi_nested[word].items()):
-                            top_word_vec = self.dict.txt2vec(top_word)
-                            if self.dict[self.dict.unk_token] not in top_word_vec and 0 not in top_word_vec:
-                                for w in top_word_vec:
-                                    batch_top_n_vec.append((w, top_value))
-                            if len(batch_top_n_vec) > TARGET_COUNT-1:
-                                break
+                    word_id = int(word_id)
+                    # TODO: is checking for unknown idx still necessary
+                    # TODO: checking for stopwords and punctuation still necessary?
+                    if word_id != self.NULL_IDX and word_id != self.UNK_IDX and word_id in self.pmi_nested.keys():
+                        for top_word_id, top_value in list(self.pmi_nested[word_id].items()):
+                            if self.UNK_IDX != top_word_id and self.NULL_IDX != top_word_id:
+                                batch_top_n_vec.append((top_word_id, top_value))
+                                if len(batch_top_n_vec) >= TARGET_COUNT:
+                                    break
                 sorted_batch_top_n_vec = list(sorted(batch_top_n_vec, key=lambda x:x[1], reverse=True))
                 if len(sorted_batch_top_n_vec) >= TOTAL_TARGET_COUNT: 
                     sorted_batch_top_n_vec = sorted_batch_top_n_vec[:TOTAL_TARGET_COUNT]
+
+                # # Uncomment for checking target topic words
+                # print("FOR SENTENCE")
+                # print(self._v2t(word_ids))
+                # print("TARGET WORDS FOUND:")
+                # print(self._v2t([entry[0] for entry in sorted_batch_top_n_vec]))
+
                 target_topic_words.append([entry[0] for entry in sorted_batch_top_n_vec])
 
+            # Make sure input sizes are equal
             target_topic_words, _ = padded_tensor(target_topic_words, self.NULL_IDX, self.use_cuda)   
             out = self.model(batch.text_vec, target_topic_words, seq_len=seq_len)
            
@@ -502,37 +510,39 @@ class Seq2seqCustomAgent(TorchAgent):
             topic_words = []
             for i, word_ids in enumerate(batch.text_vec):
                 batch_topic_words = Counter()
-                for pred_id in set(preds[i]):
-                    pred = self._v2t(torch.FloatTensor([pred_id]))
-                    pmi_sum = 0
-                    for word_id in set(word_ids):
-                        word = self._v2t(torch.FloatTensor([word_id]))
-                        batch_topic_words[pred] += self.pmi[tuple(sorted((pred, word)))]
+                # Calculate pmi sum over input words with one response word as the PMI value for that response word
+                for pred_id in set(preds[i].numpy()):
+                    pred_id = int(pred_id)
+                    for word_id in set(word_ids.numpy()):
+                        word_id = int(word_id)
+                        batch_topic_words[pred_id] += self.pmi[tuple(sorted((pred_id, word_id)))]
                 topic_words.append([w[0] for w in batch_topic_words.most_common(TOTAL_TARGET_COUNT)])
                 # Retrieve output words with pmi > threshold in combination with input words
                 # Ignore empty lists
                 if topic_words[i]:
                     # Convert words back to indices
-                    ind = self.dict.txt2vec(" ".join(topic_words[i]))
                     if self.use_cuda:
-                        topic_words[i] = torch.LongTensor(ind).cuda()
+                        topic_words[i] = torch.LongTensor(topic_words[i]).cuda()
                     else:
-                        topic_words[i] = torch.LongTensor(ind)
+                        topic_words[i] = torch.LongTensor(topic_words[i])
 
                 # Force the model to predict target words
                 indices_used = []
+                # # Uncomment for checking
+                # print("Sentence")
+                # print(self._v2t(word_ids))
                 # print("Prediction:")
-                # print(preds[i])
+                # print(self._v2t(preds[i]))
                 # print("Targets:")
-                # print(target_topic_words[i])
-                for j, word in enumerate(preds[i]):
-                    if word in target_topic_words[i]:
-                        index_word = np.where(target_topic_words[i].numpy() == word)[0][0]
+                # print(self._v2t(target_topic_words[i]))
+                for j, word_id in enumerate(preds[i]):
+                    if word_id in target_topic_words[i]:
+                        index_word = np.where(target_topic_words[i].numpy() == word_id)[0][0]
                         target_topic_words[i][j], target_topic_words[i][index_word] = int(target_topic_words[i][index_word]), int(target_topic_words[i][j])
                         indices_used.append(j)
                 # Reorder target words to suppress non topic words
-                for j, word in enumerate(preds[i]):
-                    if word not in target_topic_words[i]:
+                for j, word_id in enumerate(preds[i]):
+                    if word_id not in target_topic_words[i]:
                         for k in range(len(target_topic_words[i])):
                             if k not in indices_used:
                                 target_topic_words[i][j], target_topic_words[i][k] = int(target_topic_words[i][k]), int(target_topic_words[i][j])
@@ -553,6 +563,7 @@ class Seq2seqCustomAgent(TorchAgent):
             # self.metrics['loss'] += loss.item()
             # self.metrics['num_tokens'] += target_tokens
             loss /= target_tokens  # average loss per token
+            print("Model 1 loss: " + str(loss))
             loss.backward()
 
             self.update_params()
