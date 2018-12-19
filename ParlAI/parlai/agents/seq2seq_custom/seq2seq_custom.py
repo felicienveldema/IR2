@@ -166,6 +166,7 @@ class Seq2seqCustomAgent(TorchAgent):
         self.multigpu = (opt.get('multigpu') and self.use_cuda and
                          (opt.get('batchsize') > 1))
         states = {}
+        states2 = {}
 
         self.beam_dot_log = opt.get('beam_dot_log', False)
         self.beam_size = opt.get('beam_size', 1)
@@ -195,9 +196,9 @@ class Seq2seqCustomAgent(TorchAgent):
                 # load model parameters if available
                 print('[ Loading existing model params from {} ]'
                       ''.format(init_model))
-                states = self.load(init_model)
+                states, states2 = self.load(init_model)
 
-            self._init_model(states=states)
+            self._init_model(states=states, states2=states2)
 
         # set up criteria
         if opt.get('numsoftmax', 1) > 1:
@@ -223,7 +224,7 @@ class Seq2seqCustomAgent(TorchAgent):
 
         self.reset()
 
-    def _init_model(self, states=None):
+    def _init_model(self, states=None, states2=None):
         """Initialize model, override to change model setup."""
         opt = self.opt
         self.UNK_IDX = 3
@@ -297,7 +298,7 @@ class Seq2seqCustomAgent(TorchAgent):
             len(self.dict), opt['embeddingsize'], opt['hiddensize'],
             padding_idx=self.NULL_IDX, start_idx=self.START_IDX,
             unknown_idx=self.dict[self.dict.unk_token],
-            longest_label=states.get('longest_label', 1),
+            longest_label=states2.get('longest_label', 1),
             **kwargs)
 
 
@@ -322,6 +323,7 @@ class Seq2seqCustomAgent(TorchAgent):
         if states:
             # set loaded states if applicable
             self.model.load_state_dict(states['model'])
+            self.model2.load_state_dict(states2['model'])
 
         if opt['embedding_type'].endswith('fixed'):
             print('Seq2seq: fixing embedding weights.')
@@ -883,6 +885,7 @@ class Seq2seqCustomAgent(TorchAgent):
     def save(self, path=None):
         """Save model parameters if model_file is set."""
         path = self.opt.get('model_file', None) if path is None else path
+        path2 = path + "_2"
 
         if path and hasattr(self, 'model'):
             model = {}
@@ -891,8 +894,17 @@ class Seq2seqCustomAgent(TorchAgent):
             model['optimizer'] = self.optimizer.state_dict()
             model['optimizer_type'] = self.opt['optimizer']
 
+
+            model2 = {}
+            model2['model'] = self.model2.state_dict()
+            model2['longest_label'] = self.model2.longest_label
+            model2['optimizer'] = self.optimizer2.state_dict()
+            model2['optimizer_type'] = self.opt['optimizer2']
+
             with open(path, 'wb') as write:
                 torch.save(model, write)
+            with open(path2, 'wb') as write2:
+                torch.save(model2, write2)
 
             # save opt file
             with open(path + '.opt', 'w') as handle:
@@ -903,6 +915,7 @@ class Seq2seqCustomAgent(TorchAgent):
     def load(self, path):
         """Return opt and model states."""
         states = torch.load(path, map_location=lambda cpu, _: cpu)
+        states2 = torch.load(path + "_2", map_location=lambda cpu, _: cpu)
 
         # check opt file for multigpu
         with open(path + ".opt", 'r') as handle:
@@ -917,7 +930,7 @@ class Seq2seqCustomAgent(TorchAgent):
                     new_state_dict[name] = v
             states['model'] = new_state_dict
 
-        return states
+        return states, states2
 
 
 class mydefaultdict(defaultdict):
