@@ -575,7 +575,7 @@ class Seq2seqCustomAgent(TorchAgent):
             self.update_params()
 
             # Second model
-            out = self.model2(target_topic_words.long(), batch.label_vec, seq_len=seq_len)
+            out = self.model2(topic_words.long(), batch.label_vec, seq_len=seq_len)
             scores = out[0]
             _, preds = scores.max(2)
             score_view = scores.view(-1, scores.size(-1))
@@ -596,8 +596,8 @@ class Seq2seqCustomAgent(TorchAgent):
             # print(torch.equal(a.data, b.data))
 
             # print output
-            print(self._v2t(batch.text_vec[0]))
-            print(self._v2t(preds[0]))
+            # print(self._v2t(batch.text_vec[0]))
+            # print(self._v2t(preds[0]))
 
 
 

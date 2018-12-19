@@ -1,1 +1,1 @@
-test:{'exs': 10405, 'accuracy': 0, 'f1': 0.005391, 'bleu': 1.216e-05, 'token_acc': 0.0003007, 'loss': 10.46, 'ppl': 34790.0}
+test:{'exs': 10405, 'accuracy': 0, 'f1': 0.003736, 'bleu': 1.137e-05, 'token_acc': 0.0001572, 'loss': 10.49, 'ppl': 35890.0}
