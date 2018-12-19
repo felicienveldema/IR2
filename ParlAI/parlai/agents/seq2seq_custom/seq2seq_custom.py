@@ -27,6 +27,7 @@ import os
 import math
 import json
 import tempfile
+import time
 import pickle
 import nltk
 import string
@@ -239,15 +240,15 @@ class Seq2seqCustomAgent(TorchAgent):
                     text_word_ids = self._vectorize_text(line[0][5:]).numpy()
                     label_word_ids = self._vectorize_text(line[1][7:]).numpy()
 
-                    x_bigram = list(nltk.bigrams(text_word_ids))  
+                    x_bigram = list(nltk.bigrams(text_word_ids))
                     y_bigram = list(nltk.bigrams(label_word_ids))
 
                     for bigram in x_bigram:
-                        bigram_counter[tuple(sorted(bigram))] += 1      
+                        bigram_counter[tuple(sorted(bigram))] += 1
                     for bigram in y_bigram:
-                        bigram_counter[tuple(sorted(bigram))] += 1      
+                        bigram_counter[tuple(sorted(bigram))] += 1
                     for unigram in text_word_ids:
-                        unigram_counter[unigram] += 1  
+                        unigram_counter[unigram] += 1
                     for unigram in label_word_ids:
                         unigram_counter[unigram] += 1
 
@@ -298,6 +299,9 @@ class Seq2seqCustomAgent(TorchAgent):
             unknown_idx=self.dict[self.dict.unk_token],
             longest_label=states.get('longest_label', 1),
             **kwargs)
+
+
+        self.optimizer2 = torch.optim.Adam(self.model2.parameters(), lr=0.001)
 
         # Optimizer location:
         # ParlAI\parlai\core\torch_agent
@@ -458,6 +462,8 @@ class Seq2seqCustomAgent(TorchAgent):
         # helps with memory usage
         # self._init_cuda_buffer(self.model, self.criterion1, batchsize,
         #                        self.truncate or 180)
+        self._init_cuda_buffer(self.model, self.criterion, batchsize,
+                               self.truncate or 180)
         self._init_cuda_buffer(self.model2, self.criterion, batchsize,
                                self.truncate or 180)
 
@@ -480,14 +486,14 @@ class Seq2seqCustomAgent(TorchAgent):
                     word_id = int(word_id)
                     # TODO: is checking for unknown idx still necessary
                     # TODO: checking for stopwords and punctuation still necessary?
-                    if word_id != self.NULL_IDX and word_id != self.UNK_IDX and word_id in self.pmi_nested.keys():
+                    if word_id != self.NULL_IDX and word_id != self.UNK_IDX:
                         for top_word_id, top_value in list(self.pmi_nested[word_id].items()):
                             if self.UNK_IDX != top_word_id and self.NULL_IDX != top_word_id:
                                 batch_top_n_vec.append((top_word_id, top_value))
                                 if len(batch_top_n_vec) >= TARGET_COUNT:
                                     break
                 sorted_batch_top_n_vec = list(sorted(batch_top_n_vec, key=lambda x:x[1], reverse=True))
-                if len(sorted_batch_top_n_vec) >= TOTAL_TARGET_COUNT: 
+                if len(sorted_batch_top_n_vec) >= TOTAL_TARGET_COUNT:
                     sorted_batch_top_n_vec = sorted_batch_top_n_vec[:TOTAL_TARGET_COUNT]
 
                 # # Uncomment for checking target topic words
@@ -499,9 +505,9 @@ class Seq2seqCustomAgent(TorchAgent):
                 target_topic_words.append([entry[0] for entry in sorted_batch_top_n_vec])
 
             # Make sure input sizes are equal
-            target_topic_words, _ = padded_tensor(target_topic_words, self.NULL_IDX, self.use_cuda)   
+            target_topic_words, _ = padded_tensor(target_topic_words, self.NULL_IDX, self.use_cuda)
             out = self.model(batch.text_vec, target_topic_words, seq_len=seq_len)
-           
+
             # generated response
             scores = out[0]
             _, preds = scores.max(2)
@@ -569,7 +575,7 @@ class Seq2seqCustomAgent(TorchAgent):
             self.update_params()
 
             # Second model
-            out = self.model2(topic_words.long(), batch.label_vec, seq_len=seq_len)
+            out = self.model2(target_topic_words.long(), batch.label_vec, seq_len=seq_len)
             scores = out[0]
             _, preds = scores.max(2)
             score_view = scores.view(-1, scores.size(-1))
@@ -582,11 +588,16 @@ class Seq2seqCustomAgent(TorchAgent):
             self.metrics['loss'] += loss2.item()
             self.metrics['num_tokens'] += target_tokens
             loss2 /= target_tokens  # average loss per token
+            # a = list(self.model2.parameters())[0].clone()
             loss2.backward()
             self.update_params_2()
 
-            # # print output
-            # print([self._v2t(p) for p in preds])
+            # b = list(self.model2.parameters())[0].clone()
+            # print(torch.equal(a.data, b.data))
+
+            # print output
+            print(self._v2t(batch.text_vec[0]))
+            print(self._v2t(preds[0]))
 
 
 

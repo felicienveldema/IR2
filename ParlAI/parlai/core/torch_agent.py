@@ -300,8 +300,8 @@ class TorchAgent(Agent):
         optim_class = self.OPTIM_OPTS[opt['optimizer']]
         self.optimizer = optim_class(params, **kwargs)
 
-        optim_class2 = self.OPTIM_OPTS[opt['optimizer2']]
-        self.optimizer2 = optim_class2(params, **kwargs)
+        # optim_class2 = self.OPTIM_OPTS[opt['optimizer2']]
+        # self.optimizer2 = optim_class2(params, **kwargs)
 
         if optim_states:
             if saved_optim_type != opt['optimizer']:
