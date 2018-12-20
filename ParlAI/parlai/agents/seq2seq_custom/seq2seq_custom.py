@@ -214,7 +214,7 @@ class Seq2seqCustomAgent(TorchAgent):
 
         if self.use_cuda:
             self.criterion.cuda()
-            self.criterion1.cuda()
+            # self.criterion1.cuda()
 
         if 'train' in opt.get('datatype', ''):
             self.init_optim(
@@ -519,9 +519,9 @@ class Seq2seqCustomAgent(TorchAgent):
             for i, word_ids in enumerate(batch.text_vec):
                 batch_topic_words = Counter()
                 # Calculate pmi sum over input words with one response word as the PMI value for that response word
-                for pred_id in set(preds[i].numpy()):
+                for pred_id in set(preds[i].cpu().numpy()):
                     pred_id = int(pred_id)
-                    for word_id in set(word_ids.numpy()):
+                    for word_id in set(word_ids.cpu().numpy()):
                         word_id = int(word_id)
                         batch_topic_words[pred_id] += self.pmi[tuple(sorted((pred_id, word_id)))]
                 topic_words.append([w[0] for w in batch_topic_words.most_common(TOTAL_TARGET_COUNT)])
@@ -537,15 +537,15 @@ class Seq2seqCustomAgent(TorchAgent):
                 # Force the model to predict target words
                 indices_used = []
                 # # Uncomment for checking
-                # print("Sentence")
-                # print(self._v2t(word_ids))
-                # print("Prediction:")
-                # print(self._v2t(preds[i]))
-                # print("Targets:")
-                # print(self._v2t(target_topic_words[i]))
+                print("Sentence")
+                print(self._v2t(word_ids))
+                print("Prediction:")
+                print(self._v2t(preds[i]))
+                print("Targets:")
+                print(self._v2t(target_topic_words[i]))
                 for j, word_id in enumerate(preds[i]):
                     if word_id in target_topic_words[i]:
-                        index_word = np.where(target_topic_words[i].numpy() == word_id)[0][0]
+                        index_word = np.where(target_topic_words[i].cpu().numpy() == word_id)[0][0]
                         target_topic_words[i][j], target_topic_words[i][index_word] = int(target_topic_words[i][index_word]), int(target_topic_words[i][j])
                         indices_used.append(j)
                 # Reorder target words to suppress non topic words
@@ -582,6 +582,8 @@ class Seq2seqCustomAgent(TorchAgent):
             _, preds = scores.max(2)
             score_view = scores.view(-1, scores.size(-1))
             loss2 = self.criterion(score_view, batch.label_vec.view(-1))
+            print("Predicted sentence:")
+            print(self._v2t(preds[-1]))
             # save loss to metrics
             notnull = batch.label_vec.ne(self.NULL_IDX)
             target_tokens = notnull.long().sum().item()
