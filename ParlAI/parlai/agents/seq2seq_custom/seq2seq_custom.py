@@ -229,6 +229,8 @@ class Seq2seqCustomAgent(TorchAgent):
         opt = self.opt
         self.UNK_IDX = 3
         self.RETOK = TweetTokenizer()
+
+        # Initialize PMI model if not yet present
         if not os.path.isfile("data/Twitter/pmi_nested_ids.pkl"):
             fw4 = open(os.path.join('data/Twitter/pmi_ids.pkl'), 'wb')
             fw5 = open(os.path.join('data/Twitter/pmi_nested_ids.pkl'), 'wb')
@@ -285,7 +287,6 @@ class Seq2seqCustomAgent(TorchAgent):
         with open("data/Twitter/pmi_nested_ids.pkl", "rb") as f:
             pmi_nested = pickle.load(f)
             self.pmi_nested = {k: OrderedDict(sorted(v.items(), key=lambda x:x[1], reverse=True)) for k,v in pmi_nested.items()}
-        # self.RETOK = re.compile(r'\w+|[^\w\s]|\n', re.UNICODE)
         kwargs = opt_to_kwargs(opt)
         self.model = Seq2seq_custom(
             len(self.dict), opt['embeddingsize'], opt['hiddensize'],
@@ -462,8 +463,6 @@ class Seq2seqCustomAgent(TorchAgent):
             # throw out one training example
             batch = self.truncate_input(batch)
         # helps with memory usage
-        # self._init_cuda_buffer(self.model, self.criterion1, batchsize,
-        #                        self.truncate or 180)
         self._init_cuda_buffer(self.model, self.criterion, batchsize,
                                self.truncate or 180)
         self._init_cuda_buffer(self.model2, self.criterion, batchsize,
@@ -536,13 +535,13 @@ class Seq2seqCustomAgent(TorchAgent):
 
                 # Force the model to predict target words
                 indices_used = []
-                # # Uncomment for checking
-                print("Sentence")
-                print(self._v2t(word_ids))
-                print("Prediction:")
-                print(self._v2t(preds[i]))
-                print("Targets:")
-                print(self._v2t(target_topic_words[i]))
+                # # Uncomment for checking model 1 predictions
+                # print("Sentence")
+                # print(self._v2t(word_ids))
+                # print("Prediction:")
+                # print(self._v2t(preds[i]))
+                # print("Targets:")
+                # print(self._v2t(target_topic_words[i]))
                 for j, word_id in enumerate(preds[i]):
                     if word_id in target_topic_words[i]:
                         index_word = np.where(target_topic_words[i].cpu().numpy() == word_id)[0][0]
@@ -559,9 +558,12 @@ class Seq2seqCustomAgent(TorchAgent):
             notnull = target_topic_words.ne(self.NULL_IDX)
             target_tokens = notnull.long().sum().item()
 
-            # target_topic_words = self.onehot_initialization(target_topic_words)
-            # Pad topic words with null index for passing as input
+            # Pad topic words with null index for passing as input           
             topic_words, _ = padded_tensor(topic_words, self.NULL_IDX, self.use_cuda)
+
+            # Input sentence and topic words combined for second model
+            new_input_second_model = torch.cat((batch.text_vec, topic_words), dim=1)
+
             # output_view = output_probs.view(-1, output_probs.size(-1)).shape
             loss = self.criterion(scores.view(-1, scores.size(-1)), target_topic_words.view(-1))
             # save loss to metrics
@@ -577,13 +579,20 @@ class Seq2seqCustomAgent(TorchAgent):
             self.update_params()
 
             # Second model
-            out = self.model2(topic_words.long(), batch.label_vec, seq_len=seq_len)
+            # print(new_input_second_model)
+            # out = self.model2(topic_words.long(), batch.label_vec, seq_len=seq_len)
+            out = self.model2(new_input_second_model, batch.label_vec, seq_len=seq_len)
+
             scores = out[0]
             _, preds = scores.max(2)
             score_view = scores.view(-1, scores.size(-1))
             loss2 = self.criterion(score_view, batch.label_vec.view(-1))
-            print("Predicted sentence:")
-            print(self._v2t(preds[-1]))
+            for i in range(20):
+                print("Target sentence:")
+                print(self._v2t(batch.label_vec[i]))
+                print("Predicted sentence:")
+                print(self._v2t(preds[i]))
+
             # save loss to metrics
             notnull = batch.label_vec.ne(self.NULL_IDX)
             target_tokens = notnull.long().sum().item()
