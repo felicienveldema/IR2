@@ -19,6 +19,7 @@ The code for the implemented seq2seq model can be found in the file:
 The PMI model is created when initializing the model (**_init_model** function). This is only done once, after that this is skipped. The training of the two models is done in the function **train_step**
 
 The run the training process when in ParlAI folder:
-'''console
+
+```console
 sh twitter.sh
-'''
+```
